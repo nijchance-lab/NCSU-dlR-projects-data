@@ -1095,3 +1095,7 @@ P_cca_g<-autoplot(cca_g, display=c("wa","bp"), geom= "text")+
 ggsave("GV_cca_plots.jpeg", width=20, heigh = 15, units=c("in"))
 ```
 
+```{r}
+#this is a test#
+```
+

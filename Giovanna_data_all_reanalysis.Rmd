@@ -1,0 +1,185 @@
+---
+title: "Giovanna_data_all_reanalysis"
+author: "Nicholas Chance"
+date: "2026-02-21"
+output: html_document
+---
+#Library
+```{r}
+library(tidyverse)
+library(csv)
+library(phyloseq)
+library(phangorn)
+library(ggplot2)
+library(ggsci)
+library(dplyr)
+library(DECIPHER)
+library(Biostrings)
+library(dada2)
+library(microbiome)
+library(vegan)
+library(DESeq2)
+library(compositions)
+library(ggpubr)
+library(MicEco)
+library(phylosmith)
+library(RColorBrewer)
+library(patchwork)
+library(randomcoloR)
+library(psadd)
+library(RRPP)
+library(maaslin3)
+library(multcompView)
+```
+
+#phyloseq object
+```{r}
+taxonomy_giovanna <- 
+  readRDS("C:/Users/nicho/OneDrive/SeqCenter/Giovanna_16S Analysis/Giovanna_all_days/Giovanna1.taxa.rds")
+seqtab_nochim_giovanna <-
+  readRDS("C:/Users/nicho/OneDrive/SeqCenter/Giovanna_16S Analysis/Giovanna_all_days/Giovanna1.seqtab.nochim.rds")
+Taxtab <- as.data.frame(taxonomy_giovanna)
+ASVtab <- as.data.frame(seqtab_nochim_giovanna)
+#open metadata#
+GMeta <- as.csv("C:/Users/nicho/OneDrive/SeqCenter/Giovanna_16S Analysis/Giovanna_all_days/G_metadata_all_1.csv", 
+                row.names = 1, header = TRUE, sep = ",", 
+                check.names = TRUE, stringsAsFactors = TRUE)
+colnames(ASVtab) <- NULL
+#Naming for phyloseq input#
+samdata <- sample_data(GMeta)
+seqtab <- otu_table(ASVtab, taxa_are_rows = FALSE)
+taxtab <- tax_table(Taxtab)
+
+ps2<-phyloseq(otu_table(seqtab), tax_table(taxtab), sample_data(samdata))
+
+```
+
+```{r}
+ASV<-ps2@otu_table
+TAX<-ps2@tax_table
+SAM<-ps2@sam_data
+```
+
+```{r}
+TAX.df<- as.data.frame(ps2@tax_table)
+ASV.df<-as.data.frame(ps2@otu_table)
+```
+
+```{r}
+taxanomies<-c("ta1","ta2","ta3","ta4","ta5","ta6","ta7")
+#make all NA in tax table "unclassified"#
+tax_table(ps2)[, taxanomies][is.na(tax_table(ps2)[, taxanomies])] <- "Unclassified"
+```
+
+
+#Check for singletons
+```{r}
+any(phyloseq::taxa_sums(ps2)==1)
+```
+#remove singletons
+```{r}
+# remove singletons
+ps2 <- phyloseq::prune_taxa(phyloseq::taxa_sums(ps2) > 1, ps2) 
+```
+
+# Check transformations and varaince
+```{r}
+(psadd::plot_mv(ps2, log=TRUE, title = "Raw Mean-Variance Plot"))
+```
+## VST transformation
+```{r}
+ps2_vst<-ps2
+sd<-data.frame(ps2@sam_data)
+sd_subset<-sd %>% 
+  select(substrate,OLR_VS, pH, Ammonia, TVFA)
+sample_data(ps2_vst) <- sample_data(sd_subset)
+ps2_pseudo<-phyloseq::transform_sample_counts(ps2_vst, function(x){x+1}) #add psuedo count for vst transform
+```
+
+
+```{r}
+dds<- phyloseq::phyloseq_to_deseq2(ps2_pseudo, ~substrate+OLR_VS)
+dds = DESeq2::estimateSizeFactors(dds)
+dds = DESeq2::estimateDispersions(dds, fitType = "parametric") 
+```
+
+```{r}
+DESeq2::plotDispEsts(dds)
+```
+```{r}
+vsd<-DESeq2::getVarianceStabilizedData(dds)
+
+# copy original ps object
+ps_vst2 <- ps2_pseudo
+
+# replace the original Otu_table with the transformed data
+phyloseq::otu_table(ps_vst2) <- phyloseq::otu_table(vsd, taxa_are_rows = TRUE)
+```
+
+```{r}
+(psadd::plot_mv(ps_vst2, log=TRUE, title = "VST Mean-Variance Plot"))
+```
+
+
+## CLR transform
+```{r}
+ps_clr <- microbiome::transform(ps2, transform="clr")
+min(phyloseq::otu_table(ps_clr))
+```
+
+```{r}
+(psadd::plot_mv(ps_clr, log=TRUE, title = "CLR Mean-Variance Plot"))
+```
+
+
+
+#subset data to see if sequencing depths are causing skew in transformations
+## pre
+```{r}
+ps_pre<-subset_samples(ps2, pre_post=="Pre")
+```
+
+```{r}
+(psadd::plot_mv(ps_pre, log=TRUE, title = "Raw Mean-Variance Plot"))
+```
+## vst tranformation
+```{r}
+ps_pre_vst<-ps_pre
+sd_pre<-data.frame(ps_pre@sam_data)
+sd_pre_subset<-sd %>% 
+  select(substrate,OLR_VS, pH, Ammonia, TVFA)
+sample_data(ps_pre_vst) <- sample_data(sd_pre_subset)
+ps_pre_pseudo<-phyloseq::transform_sample_counts(ps_pre_vst, function(x){x+1})
+```
+
+```{r}
+dds_pre<- phyloseq::phyloseq_to_deseq2(ps_pre_pseudo, ~substrate+OLR_VS)
+dds_pre = DESeq2::estimateSizeFactors(dds_pre)
+dds_pre = DESeq2::estimateDispersions(dds_pre, fitType = "parametric") 
+```
+```{r}
+DESeq2::plotDispEsts(dds_pre)
+```
+```{r}
+vsd_pre<-DESeq2::getVarianceStabilizedData(dds_pre)
+
+# copy original ps object
+ps_pre_vst2 <- ps_pre_pseudo
+
+# replace the original Otu_table with the transformed data
+phyloseq::otu_table(ps_pre_vst2) <- phyloseq::otu_table(vsd_pre, taxa_are_rows = TRUE)
+```
+
+```{r}
+(psadd::plot_mv(ps_pre_vst2, log=TRUE, title = "VST Mean-Variance Plot"))
+```
+
+## CLR pre
+```{r}
+ps_pre_clr <- microbiome::transform(ps_pre, transform="clr")
+```
+
+```{r}
+(psadd::plot_mv(ps_pre_clr, log=TRUE, title = "CLR Mean-Variance Plot"))
+```
+

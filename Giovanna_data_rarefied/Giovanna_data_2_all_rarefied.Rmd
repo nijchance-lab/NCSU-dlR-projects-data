@@ -1,0 +1,1097 @@
+---
+title: "Giovanna_data_2_all_rarefied"
+author: "Nicholas Chance"
+date: "2025-12-10"
+output: 
+  html_document:
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width = 15, fig.height=9)
+```
+
+# Library
+```{r}
+#open packages necessary#
+library(phyloseq) #needed to create phyloseq object#
+library(csv) #to read csv files, in this case GMeta from excel#
+library(tidyverse) #cleans up large data sets/tables#
+library(ggplot2) #plotting#
+library(vegan) #microbial comm analysis, diversity indices#
+library(ggvegan) #plotting specifically with vegan#
+library(ggsci) #more/larger color palettes# 
+library(randomcoloR) #specifically for distinct color palettes)
+library(igraph) #graphing network analysis#
+library(MiscMetabar)
+library(ggVennDiagram) #make venn diagrams#
+library(cowplot)
+library(RColorBrewer)
+library(ggpubr)
+library(patchwork)
+library(RRPP)
+library(maaslin3)
+library(multcompView)
+library(pairwiseAdonis)
+```
+
+## open files
+```{r}
+#Open files#
+taxonomy_giovanna <- 
+  readRDS("C:/Users/nicho/OneDrive/SeqCenter/Giovanna_16S Analysis/Giovanna_all_days/Giovanna1.taxa.rds")
+seqtab_nochim_giovanna <-
+  readRDS("C:/Users/nicho/OneDrive/SeqCenter/Giovanna_16S Analysis/Giovanna_all_days/Giovanna1.seqtab.nochim.rds")
+
+#Convert files into useable data frames#
+Taxtab <- as.data.frame(taxonomy_giovanna)
+ASVtab <- as.data.frame(seqtab_nochim_giovanna)
+#open metadata#
+GMeta <- as.csv("C:/Users/nicho/OneDrive/SeqCenter/Giovanna_16S Analysis/Giovanna_all_days/G_metadata_all_2.csv", 
+                row.names = 1, header = TRUE, sep = ",", 
+                check.names = TRUE, stringsAsFactors = TRUE)
+```
+
+## Standardize variables in metadata
+```{r}
+GMeta_std<-GMeta
+numeric_col<-c("OLR_num", "pH","Ammonia", "TVFA")
+GMeta_std[numeric_col]<-vegan::decostand(GMeta_std[numeric_col], "standardize")
+```
+
+### check if it worked
+```{r}
+# check column means (to 1 decimal place)- should be zero
+round(apply(GMeta_std[numeric_col], 2, mean), 1)
+```
+```{r}
+# check std dev of columns- should be 1
+apply(GMeta_std[numeric_col], 2, sd)
+```
+## base phyloseq object
+```{r}
+samdata_base<-sample_data(GMeta)
+GV_ps_base = phyloseq(otu_table(seqtab), tax_table(taxtab), sample_data(samdata_base))
+```
+
+
+## Rarefy object
+```{r}
+#rarefy ASVtab with vegan rarefaction# 
+ASVtab_rar_veg <- rrarefy(ASVtab, sample = 4726)
+
+ASVtab[1:3,1:3]
+colnames(ASVtab) <- NULL
+
+#naming for phyloseq object#
+samdata <- sample_data(GMeta_std)
+seqtab <- otu_table(ASVtab, taxa_are_rows = FALSE)
+taxtab <- tax_table(Taxtab)
+seqtab_veg <- otu_table(ASVtab_rar_veg, taxa_are_rows = FALSE)
+#Check that names match to output#
+head(sample_names(samdata))
+head(sample_names(seqtab))
+head(taxa_names(seqtab))
+head(taxa_names(taxtab))
+
+#### rarefy asv table####
+seqtab_rar <- rarefy_even_depth(seqtab, sample.size = min(sample_sums(seqtab)), 
+                                rngseed=5, trimOTUs=TRUE, replace = FALSE )
+
+#making phyloseq object#
+GV_all_ps = phyloseq(otu_table(seqtab), tax_table(taxtab), sample_data(samdata))
+
+#make phyloseq object with otu table rarefied first
+GV_all_rar_1 = phyloseq(otu_table(seqtab_rar), tax_table(taxtab), 
+                        sample_data(samdata))
+sample_sums(GV_all_rar_1)
+####rarefy whole phyloseq object####
+GV_all_rar <- rarefy_even_depth(GV_all_ps, 
+                                sample.size = min(sample_sums(GV_all_ps)), 
+                                                             rngseed=5, 
+                                trimOTUs=TRUE, replace = FALSE)
+GV_all_rar_d <-psmelt(GV_all_rar)
+GV_genus_rar <-tax_glom(GV_all_rar, taxrank = "ta6")
+GV_genus_rar_d <- psmelt(GV_genus_rar)
+
+
+####rarefy with vegan rarefy####
+GV_all_rar_veg <-phyloseq(otu_table(seqtab_veg), tax_table(taxtab), 
+                          sample_data(samdata))
+sample_sums(GV_all_rar_veg)
+
+GV_all_rar_veg_d <-psmelt(GV_all_rar_veg)
+GV_genus_rar_veg <-tax_glom(GV_all_rar_veg, taxrank = "ta6")
+GV_genus_rar_veg_d <- psmelt(GV_genus_rar_veg)
+```
+
+## rarefaction curve
+```{r}
+S <- specnumber(ASVtab_rar_veg)
+(raremax<-min(rowSums(ASVtab_rar_veg)))
+Srare <- rarefy(ASVtab_rar_veg, raremax)
+rarecurve(ASVtab_rar_veg, step = 50, sample = raremax, col = "blue", cex = .2)
+```
+
+
+# Relative abundance
+```{r}
+GV_ps_percentage_rar = phyloseq::transform_sample_counts(GV_genus_rar, 
+                                                     function(x){x / sum(x)})
+GV_ps_relative_rar_d <- psmelt(GV_ps_percentage_rar)
+```
+
+```{r}
+GV_ps_relative_rar_d$ta6 <- as.character(GV_ps_relative_rar_d$ta6)
+GV_ps_relative_rar_d1 <- GV_ps_relative_rar_d %>%
+  group_by(Day_ID, substrate, ta6) %>%
+  mutate(median=median(Abundance))
+keep <- unique(GV_ps_relative_rar_d1$ta6[GV_ps_relative_rar_d1$median >.01])
+GV_ps_relative_rar_d1$ta6[!(GV_ps_relative_rar_d1$ta6 %in% keep)] <- "< 1%"
+GV_ps_rel_sum_rar <- GV_ps_relative_rar_d1%>%
+  group_by(Sample,Day_ID, substrate, ta6) %>%
+  summarise(Abundance=sum(Abundance))
+```
+
+```{r}
+load("C:/Users/nicho/OneDrive/Documents/GV_palette_ra.RData") # previously saved palette specifically for this plots
+```
+
+# all substrate relative abundance graph
+```{r}
+GV_ps_rel_sum_rar$Day_ID <-
+  factor(GV_ps_rel_sum_rar$Day_ID,
+         levels=c("0-1", "0-2", "16-1","16-2","24-1","24-2","32-1","32-2",
+                  "36-1","36-2","40-1","40-2","44-1","44-2","52-1","52-2",
+                  "60-1","60-2","72-1","72-2",
+                  "88-1","88-2","100-1","100-2","120-1","120-2","128-1","128-2",
+                  "132-1","132-2","140-1","140-2","156-1","156-2"))
+GV_ps_rel_sum_rar$substrate <-
+  factor(GV_ps_rel_sum_rar$substrate, 
+         levels=c("Protein","Carbohydrate","Grease"))
+
+#Plot final relative abundance chart#
+ggplot(GV_ps_rel_sum_rar, aes(x = Day_ID, y = Abundance, fill = Genus)) + 
+  geom_bar(stat = "identity", aes(fill=ta6)) +
+  labs(x="", y="% Abundance") +
+  facet_wrap(~substrate, scales= "free_x", nrow=1) +
+  scale_fill_manual(values = (GV_palette_ra))+
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=15),
+        strip.text.x = element_text(size=20),
+        legend.key.size = unit(.7,'cm'),
+        axis.text.x.bottom = element_text(angle = 90),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.text=element_text(size=12),
+        plot.margin = unit(c(0,0,0,0),'cm'),
+        legend.margin = margin(l=-0.05, unit="npc"))+
+  guides(fill = guide_legend(nrow = 9))
+```
+
+# Subset samples by domain 
+```{r}
+GV_archaea_rar <- subset_taxa(GV_genus_rar, ta1 == "Archaea" )
+GV_arcahaea_rar_d <- psmelt(GV_archaea_rar)
+
+GV_bacteria_rar <- subset_taxa(GV_genus_rar, ta1 == "Bacteria" )
+GV_bacteria_rar_d <- psmelt(GV_bacteria_rar)
+```
+
+# Subset samples by substrate
+```{r}
+#base
+GV_base_p<-subset_samples(GV_ps_base, substrate == "Protein")
+GV_base_c<-subset_samples(GV_ps_base, substrate == "Carbohydrate")
+GV_base_g<-subset_samples(GV_ps_base, substrate == "Grease")
+#standardized
+GV_ps_protein_rar <-subset_samples(GV_genus_rar, substrate == "Protein")
+GV_ps_carb_rar <-subset_samples(GV_genus_rar, substrate == "Carbohydrate")
+GV_ps_grease_rar <- subset_samples(GV_genus_rar, substrate == "Grease")
+```
+
+## ASVtab and samdata from each substrate subset (as data frame)
+```{r}
+#base protein
+samdata_p_std<-data.frame(GV_base_p@sam_data)
+samdata_p_std[numeric_col]<-vegan::decostand(samdata_p_std[numeric_col], "standardize")
+
+#base carb
+samdata_c_std<-data.frame(GV_base_c@sam_data)
+samdata_c_std[numeric_col]<-vegan::decostand(samdata_c_std[numeric_col], "standardize")
+
+#base carb
+samdata_g_std<-data.frame(GV_base_g@sam_data)
+samdata_g_std[numeric_col]<-vegan::decostand(samdata_g_std[numeric_col], "standardize")
+
+#protein
+ASVtab_p<-as.data.frame(GV_ps_protein_rar@otu_table)
+samdata_p<-as.data.frame(GV_ps_protein_rar@sam_data)
+#carbohydrate
+ASVtab_c<-as.data.frame(GV_ps_carb_rar@otu_table)
+samdata_c<-as.data.frame(GV_ps_carb_rar@sam_data)
+#grease
+ASVtab_g<-as.data.frame(GV_ps_grease_rar@otu_table)
+samdata_g<-as.data.frame(GV_ps_grease_rar@sam_data)
+
+
+
+```
+
+
+# PCoA on all Bacteria
+```{r}
+bray_pcoa_rar_b_1 <- phyloseq::ordinate(
+  physeq = GV_bacteria_rar,
+  method = "PCoA", 
+  distance = "bray")
+
+sample_data(GV_bacteria_rar)$OLR_VS <- factor(sample_data(GV_bacteria_rar)$OLR_VS,
+         levels=c("Start","Inc_1","Inc_2","Inc_3","Inc_4","Recovery"))
+P_all_b_pcoa<- plot_ordination(
+  physeq = GV_bacteria_rar,          
+  ordination = bray_pcoa_rar_b_1, label = "Day_ID")+ 
+  geom_text(label = "", check_overlap=TRUE)+ 
+  geom_point(aes(shape = substrate, 
+                 color = as.factor(OLR_VS)), size = 3, stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","black","orange"))+
+  scale_shape_manual(values = c(15,16,17))+
+  guides(fill = guide_legend(override.aes = list(shape = 21)))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  stat_ellipse(type="t", aes(group=substrate,linetype=substrate))+
+  labs(title = "D")
+```
+
+
+# Canonical Correspondance analysis (CCA)
+```{r}
+#### Canonical Correspondence analysis- protein####
+cca_protein_rar <- phyloseq::ordinate(GV_ps_protein_rar, "CCA", 
+                        formula = GV_ps_protein_rar ~OLR_num+pH+Ammonia+TVFA)
+print(cca_protein_rar) # allow for checking inertia/fit#
+cca_p_p <- plot(cca_protein_rar, display = c("wa","bp","cn"))
+
+####Canonical Correspondence analysis- carbohydrate####
+cca_carb_rar <- phyloseq::ordinate(GV_ps_carb_rar, "CCA", 
+                     formula = GV_ps_carb_rar ~OLR_num+pH+Ammonia)
+print(cca_carb_rar) # allow for checking inertia/fit#
+plot(cca_carb_rar, display =c("wa","bp","cn"))
+
+####Canonical Correspondence analysis- grease####
+cca_grease_rar <- phyloseq::ordinate(GV_ps_grease_rar, "CCA",
+                       formula = GV_ps_grease_rar ~OLR_num+pH+Ammonia+TVFA)
+print(cca_grease_rar)
+cca_g_p<-plot(cca_grease_rar, display =c("wa","bp","cn"))
+
+(cca_p_p | cca_c_p)
+```
+
+# Alpha Diversity
+```{r}
+#### alpha diversity####
+d_richness_rar <- estimateR(seqtab_rar) #richness and chao1#
+#d_evenness_rar <- diversity(seqtab_rar) / log(specnumber(ASVtab_rar_veg))  #evenness#
+d_shannon_rar <- diversity(seqtab_rar, index= "shannon") #shannon#
+d_simpson_rar <- diversity(seqtab_rar, index = "simpson")
+d_alphadiv_rar <- cbind(GMeta, t(d_richness_rar), d_shannon_rar, d_simpson_rar) #combine into 1 table#
+
+rm(d_richness, d_shannon, d_simpson) 
+d_alphadiv_tidy_rar <- 
+  d_alphadiv_rar %>%
+  mutate(sample_id = rownames(d_alphadiv_rar)) %>%
+  gather(key   = alphadiv_index,
+         value = obs_values,
+         -sample_id, -substrate, -OLR_VS)
+
+#plot- for total substrate samples#
+P_richness_rar <- ggplot(d_alphadiv, aes(x=substrate, y=S.obs)) +
+  geom_boxplot(fill=c("blue","red","green")) +
+  labs(title= 'Richness', x= ' ', y= '', tag = "A") +
+  geom_point()
+
+P_chao_rar <- ggplot(d_alphadiv, aes(x=substrate, y=S.chao1)) +
+  geom_boxplot(fill=c("blue","red", "green")) +
+  labs(title= 'Chao1', x= ' ', y= '', tag = "B") +
+  geom_point()
+
+P_simpson_rar <- ggplot(d_alphadiv, aes(x=substrate, y=d_simpson)) +
+  geom_boxplot(fill=c("blue","red", "green")) +
+  labs(title= 'Simpson', x= ' ', y= '', tag = "C") +
+  geom_point()
+
+P_shannon_rar <- ggplot(d_alphadiv, aes(x=substrate, y=d_shannon)) +
+  geom_boxplot(fill=c("blue","red","green")) +
+  labs(title= 'Shannon', x= ' ', y= '', tag = "D") +
+  geom_point()
+
+#combine#
+(P_richness_rar | P_chao_rar) / (P_simpson_rar | P_shannon_rar)
+```
+
+# Protein
+## Subset
+```{r}
+GV_archaea_p_rar <- subset_samples(GV_archaea_rar, substrate == "Protein")
+GV_bacteria_p_rar <- subset_samples(GV_bacteria_rar, substrate == "Protein")
+```
+
+## Archaea relative abundance
+```{r}
+GV_archaea_p_rar_ra <- transform_sample_counts(GV_archaea_p_rar, 
+                                           function(x) 100 * x/sum(x)) 
+GV_archaea_p_rar_ra_d <- psmelt(GV_archaea_p_rar_ra)
+
+GV_archaea_p_rar_ra_d$ta6 <- as.character(GV_archaea_p_rar_ra_d$ta6)
+GV_archaea_p_rar_ra_d1 <- GV_archaea_p_rar_ra_d %>%
+  group_by(Day_ID, OLR_VS, ta6) %>%
+  mutate(median=median(Abundance))
+keep <- unique(GV_archaea_p_rar_ra_d1$ta6[GV_archaea_p_rar_ra_d1$median >1])
+GV_archaea_p_rar_ra_d1$ta6[!(GV_archaea_p_rar_ra_d1$ta6 %in% keep)] <- "< 1%"
+GV_archaea_p_sum_rar <- GV_archaea_p_rar_ra_d1%>%
+  group_by(Sample, Day_ID, OLR_VS, ta6) %>%
+  summarise(Abundance=sum(Abundance)) 
+
+GV_archaea_p_sum_rar$Day_ID <-
+  factor(GV_archaea_p_sum_rar$Day_ID,
+         levels=c("0-1", "0-2", "16-1","16-2","40-1","40-2","72-1","72-2",
+                  "88-1","88-2","100-1","100-2","120-1","120-2",
+                  "140-1","140-2","156-1","156-2"))
+p_archaea_protein_rar <- distinctColorPalette(11)
+ggplot(GV_archaea_p_sum_rar, aes(x = Day_ID, y = Abundance, fill = Genus)) + 
+  geom_bar(stat = "identity", aes(fill=ta6)) +
+  labs(x="", y="% Abundance") +
+  scale_fill_manual(values = (p_archaea_protein_rar))+
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text.x.bottom = element_text(angle = 90))
+```
+
+## Bacteria relative abundance
+```{r}
+GV_bacteria_p_rar <- subset_samples(GV_bacteria_rar, substrate == "Protein")
+GV_bacteria_p_rar_d <- psmelt(GV_bacteria_p_rar)
+GV_bacteria_p_rar_ra <- transform_sample_counts(GV_bacteria_p_rar, 
+                                            function(x) 100 * x/sum(x))
+GV_bacteria_p_rar_ra_d <- psmelt(GV_bacteria_p_rar_ra)
+
+GV_bacteria_p_rar_ra_d$ta6 <- as.character(GV_bacteria_p_rar_ra_d$ta6)
+GV_bacteria_p_rar_ra_d1 <- GV_bacteria_p_rar_ra_d %>%
+  group_by(Day_ID, OLR_VS, ta6) %>%
+  mutate(median=median(Abundance))
+keep <- unique(GV_bacteria_p_rar_ra_d1$ta6[GV_bacteria_p_rar_ra_d1$median >1])
+GV_bacteria_p_rar_ra_d1$ta6[!(GV_bacteria_p_rar_ra_d1$ta6 %in% keep)] <- "< 1%"
+GV_bacteria_p_sum_rar <- GV_bacteria_p_rar_ra_d1%>%
+  group_by(Sample, Day_ID, ta6) %>%
+  summarise(Abundance=sum(Abundance)) 
+
+
+GV_bacteria_p_sum_rar$Day_ID <-
+  factor(GV_bacteria_p_sum_rar$Day_ID,
+         levels=c("0-1", "0-2", "16-1","16-2","40-1","40-2","72-1","72-2",
+                  "88-1","88-2","100-1","100-2","120-1","120-2",
+                  "140-1","140-2","156-1","156-2"))
+
+p_bacteria_protein_rar <- distinctColorPalette(57)
+ggplot(GV_bacteria_p_sum_rar, aes(x = Day_ID, y = Abundance, fill = Genus)) + 
+  geom_bar(stat = "identity", aes(fill=ta6)) +
+  labs(x="", y="% Abundance") +
+  scale_fill_manual(values = (p_bacteria_protein_rar))+
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text.x.bottom = element_text(angle = 90))
+```
+
+# Carbohydrates
+## Subset
+```{r}
+GV_archaea_c_rar <- subset_samples(GV_archaea_rar, substrate == "Carbohydrate")
+GV_bacteria_c_rar <- subset_samples(GV_bacteria_rar, substrate == "Carbohydrate")
+```
+
+## Archaea relative abundance
+```{r}
+GV_archaea_c_ra_rar <- transform_sample_counts(GV_archaea_c_rar, 
+                                           function(x) 100 * x/sum(x)) 
+GV_archaea_c_ra_d_rar <- psmelt(GV_archaea_c_ra_rar)
+
+GV_archaea_c_ra_d_rar$ta6 <- as.character(GV_archaea_c_ra_d_rar$ta6)
+GV_archaea_c_ra_d1_rar <- GV_archaea_c_ra_d_rar %>%
+  group_by(Day_ID, OLR_VS, ta6) %>%
+  mutate(median=median(Abundance))
+keep <- unique(GV_archaea_c_ra_d1_rar$ta6[GV_archaea_c_ra_d1_rar$median >1])
+GV_archaea_c_ra_d1_rar$ta6[!(GV_archaea_c_ra_d1_rar$ta6 %in% keep)] <- "< 1%"
+GV_archaea_c_sum_rar <- GV_archaea_c_ra_d1_rar%>%
+  group_by(Sample, Day_ID, OLR_VS, ta6) %>%
+  summarise(Abundance=sum(Abundance))
+
+GV_archaea_c_sum_rar$Day_ID <-
+  factor(GV_archaea_c_sum_rar$Day_ID,
+         levels=c("0-1", "0-2", "16-1","16-2","24-1","24-2","36-1","36-2",
+                  "44-1","44-2","60-1","60-2","88-1","88-2","100-1","100-2",
+                  "128-1","128-2","140-1","140-2","156-1","156-2"))
+
+p_archaea_carb_rar <- distinctColorPalette(12)
+ggplot(GV_archaea_c_sum_rar, aes(x = Day_ID, y = Abundance, fill = Genus)) + 
+  geom_bar(stat = "identity", aes(fill=ta6)) +
+  labs(x="", y="% Abundance") +
+  scale_fill_manual(values = (p_archaea_carb_rar))+
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text.x.bottom = element_text(angle = 90))
+```
+
+## Bacteria relative abundance
+```{r}
+GV_bacteria_c_d_rar <- psmelt(GV_bacteria_c_rar)
+GV_bacteria_c_ra_rar <- transform_sample_counts(GV_bacteria_c_rar, 
+                                            function(x) 100 * x/sum(x))
+GV_bacteria_c_ra_d_rar <- psmelt(GV_bacteria_c_ra_rar)
+
+GV_bacteria_c_ra_d_rar$ta6 <- as.character(GV_bacteria_c_ra_d_rar$ta6)
+GV_bacteria_c_ra_d1_rar <- GV_bacteria_c_ra_d_rar %>%
+  group_by(Day_ID, OLR_VS, ta6) %>%
+  mutate(median=median(Abundance))
+keep <- unique(GV_bacteria_c_ra_d1_rar$ta6[GV_bacteria_c_ra_d1_rar$median >1])
+GV_bacteria_c_ra_d1_rar$ta6[!(GV_bacteria_c_ra_d1_rar$ta6 %in% keep)] <- "< 1%"
+GV_bacteria_c_sum_rar <- GV_bacteria_c_ra_d1_rar%>%
+  group_by(Sample, Day_ID, ta6) %>%
+  summarise(Abundance=sum(Abundance))
+
+GV_bacteria_c_sum_rar$Day_ID <-
+  factor(GV_bacteria_c_sum_rar$Day_ID,
+         levels=c("0-1", "0-2", "16-1","16-2","24-1","24-2","36-1","36-2",
+                  "44-1","44-2","60-1","60-2","88-1","88-2","100-1","100-2",
+                  "128-1","128-2","140-1","140-2","156-1","156-2"))
+
+p_bacteria_carb_rar <- distinctColorPalette(58)
+ggplot(GV_bacteria_c_sum_rar, aes(x = Day_ID, y = Abundance, fill = Genus)) + 
+  geom_bar(stat = "identity", aes(fill=ta6)) +
+  labs(x="", y="% Abundance") +
+  scale_fill_manual(values = (p_bacteria_carb_rar))+
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text.x.bottom = element_text(angle = 90))
+```
+
+# Grease
+## Subset
+```{r}
+GV_archaea_g_rar <- subset_samples(GV_archaea_rar, substrate == "Grease")
+GV_bacteria_g_rar <- subset_samples(GV_bacteria_rar, substrate == "Grease")
+```
+
+#Beta Diversity- by substrate
+##Protein
+### PCoA Bacteria
+```{r}
+bray_pcoa_p_bacteria_rar <- phyloseq::ordinate(
+  physeq = GV_bacteria_p_rar,
+  method = "PCoA", 
+  distance = "bray")
+
+sample_data(GV_bacteria_p_rar)$OLR_VS <- 
+  factor(sample_data(GV_bacteria_p_rar)$OLR_VS,
+         levels=c("Start","Inc_1","Inc_2","Inc_3","Inc_4","Recovery"))
+P_p_b_pcoa <- 
+  plot_ordination(physeq = GV_bacteria_p_rar, ordination = bray_pcoa_p_bacteria_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1, shape=17)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","black"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  stat_ellipse(type="t",linetype=1, aes(group=OLR_VS, color=OLR_VS))+
+  labs(title = "A")
+```
+
+### PCoA Archara
+```{r}
+bray_pcoa_p_archaea_rar <- ordinate(
+  physeq = GV_archaea_p_rar,
+  method = "PCoA", 
+  distance = "bray")
+
+P_p_a_pcoa <- 
+  plot_ordination(physeq = GV_archaea_p_rar, ordination = bray_pcoa_p_archaea_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  labs(title = "Protein archaea PCoA rarefied")
+```
+
+### NMDS Archaea
+```{r}
+NMDS_p_archaea_rar <- ordinate(physeq = GV_archaea_p_rar, method = "NMDS", 
+                           distance = "bray")
+
+P_p_a_NMDS<- 
+  plot_ordination(physeq = GV_archaea_p_rar, ordination = NMDS_p_archaea_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  labs(title = "Protein archaea NMDS rarefied")
+```
+
+### NMDS Bacteria
+```{r}
+NMDS_p_bacteria_rar <- ordinate(physeq = GV_bacteria_p_rar, method = "NMDS", 
+                               distance = "bray")
+
+P_p_b_NMDS<-
+  plot_ordination(physeq = GV_bacteria_p_rar, ordination = NMDS_p_bacteria_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  labs(title = "Protein NMDS bacteria rarefied")
+```
+
+### Combine plots
+```{r}
+(P_p_b_NMDS | P_p_b_pcoa 
+  |PP_p_b_NMDS | PP_p_b_pcoa)/ (P_p_a_NMDS | P_p_a_pcoa | 
+                                  PP_p_a_NMDS | PP_p_a_pcoa)
+```
+
+## Carbohydrate
+### PCoA Bacteria
+```{r}
+bray_pcoa_c_bacteria_rar <- phyloseq::ordinate(
+  physeq = GV_bacteria_c_rar,
+  method = "PCoA", 
+  distance = "bray")
+
+sample_data(GV_bacteria_c_rar)$OLR_VS <- 
+  factor(sample_data(GV_bacteria_c_rar)$OLR_VS,
+         levels=c("Start","Inc_1","Inc_2","Inc_3","Recovery"))
+P_c_b_pcoa<-
+  plot_ordination(physeq = GV_bacteria_c_rar, ordination = bray_pcoa_c_bacteria_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1, shape=15)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  stat_ellipse(type="t",linetype=1, aes(group=OLR_VS, color=OLR_VS))+
+  labs(title = "B")
+```
+
+### NMDS Bacteria
+```{r}
+NMDS_c_bacteria_rar <- ordinate(physeq = GV_bacteria_c_rar, method = "NMDS", 
+                            distance = "bray")
+
+P_c_b_NMDS <- 
+  plot_ordination(physeq = GV_bacteria_c_rar, ordination = NMDS_c_bacteria_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  labs(title = "Carbohydrate bacteria NMDS rarefied")
+```
+
+### PCoA Archaea
+```{r}
+pcoa_c_archaea_rar <- ordinate(
+  physeq = GV_archaea_c_rar,
+  method = "PCoA", 
+  distance = "bray")
+
+P_c_a_pcoa <-plot_ordination(physeq = GV_archaea_c_rar, ordination = pcoa_c_archaea_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  labs(title = "Carbohydrate archaea PCoA rarefied")
+```
+
+### NMDS Archara
+```{r}
+NMDS_c_archaea_rar <- ordinate(physeq = GV_archaea_c_rar, method = "NMDS", 
+                                distance = "bray")
+
+P_c_a_NMDS <-plot_ordination(physeq = GV_archaea_c_rar, ordination = NMDS_c_archaea_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+labs(title = "Carbohydrate archaea NMDS rarefied")
+```
+
+### combine
+```{r}
+(P_c_b_NMDS | P_c_b_pcoa | 
+    PP_c_b_NMDS | PP_c_b_pcoa) / (P_c_a_NMDS | P_c_a_pcoa |
+                                    PP_c_a_NMDS | PP_c_a_pcoa)
+
+```
+
+## Grease
+### PCoA Bacteria
+```{r}
+bray_pcoa_g_bacteria_rar <- phyloseq::ordinate(
+  physeq = GV_bacteria_g_rar,
+  method = "PCoA", 
+  distance = "bray")
+
+sample_data(GV_bacteria_g_rar)$OLR_VS <- 
+  factor(sample_data(GV_bacteria_g_rar)$OLR_VS,
+         levels=c("Start","Inc_1","Recovery","Inc_2","Inc_3"))
+P_g_b_pcoa<-
+  plot_ordination(physeq = GV_bacteria_g_rar, ordination = bray_pcoa_g_bacteria_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","orange","red","pink"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  stat_ellipse(type="t",linetype=1, aes(group=OLR_VS, color=OLR_VS))+
+  labs(title = "C")
+```
+
+### NMDS Bacteria
+```{r}
+NMDS_g_bacteria_rar <- ordinate(physeq = GV_bacteria_g_rar, method = "NMDS", 
+                               distance = "bray")
+
+P_g_b_NMDS<- 
+  plot_ordination(physeq = GV_bacteria_g_rar, ordination = NMDS_g_bacteria_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  labs(title = "Grease bacteria NMDS rarefied")
+```
+
+### PCoA Archaea
+```{r}
+bray_pcoa_g_archaea_rar <- ordinate(
+  physeq = GV_archaea_g_rar,
+  method = "PCoA", 
+  distance = "bray")
+
+P_g_a_pcoa<-
+  plot_ordination(physeq = GV_archaea_g_rar, ordination = bray_pcoa_g_archaea_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  labs(title = "Grease archaea PCoA rarefied")
+```
+
+### NMDS Archaea
+```{r}
+NMDS_g_archaea_rar <- ordinate(physeq = GV_archaea_g_rar, method = "NMDS", 
+                                distance = "bray")
+
+P_g_a_NMDS<-
+  plot_ordination(physeq = GV_archaea_g_rar, ordination = NMDS_g_archaea_rar,
+                label = "Day_ID") +
+  geom_point(aes(color = as.factor(OLR_VS)), size = 3,
+             stroke = 1)+
+  theme_classic()+
+  scale_color_manual(values = c("blue","green","red","pink","orange"))+
+  theme(legend.title=element_blank(),
+        legend.text = element_text(size = 10, face = "bold"))+
+  labs(title = "Grease archaea NMDS rarefied")
+```
+
+### combine
+```{r}
+(P_g_b_NMDS | P_g_b_pcoa) / (P_g_a_NMDS | P_g_a_pcoa)
+```
+
+## Combine Bacteria PCoA plots
+```{r}
+knitr::opts_chunk$set(fig.width = 20, fig.height=20)
+```
+
+
+```{r fig.height=9, fig.width=13, message=FALSE, warning=FALSE}
+(P_p_b_pcoa | P_c_b_pcoa) / (P_g_b_pcoa | P_all_b_pcoa)
+ggsave("GV_pcoa_all_interval_1.jpeg", width=15, heigh = 10, units=c("in"))
+
+```
+
+
+#Permanova
+
+## remove OLR_VS tab for whole data
+```{r}
+samdata_no_olr<-subset(samdata, select=-OLR_VS)
+```
+
+
+## Check homogeneity for substrate
+```{r}
+ASV_d<-vegan::vegdist(ASVtab, method="bray")
+
+anova(vegan::betadisper(ASV_d, samdata_no_olr$substrate))
+```
+#showing variance homogeneity because no significant difference- good
+
+## Permanova on Substrate
+```{r}
+ASV_m<-as.matrix(ASVtab)
+otu.rrpp<-RRPP::lm.rrpp(ASV_d ~ substrate,
+                        data= samdata_no_olr, SS.type="III",
+                        print.progress=FALSE,
+                        seed="random",
+                        iter=999)
+```
+
+```{r}
+anova(otu.rrpp, effect.type="F",
+      error=c("Residuals"))
+```
+## significant difference based on substrate
+
+###Pairwise
+```{r}
+PW<-RRPP::pairwise(otu.rrpp, groups=samdata_no_olr$substrate)
+summary(PW)
+```
+
+### FDR correction
+```{r}
+SPW<-summary(PW)
+pvals.sub<-SPW$pairwise.table$P # get pvalue matrix
+
+# FDR correction
+fdr.pvals.sub<-p.adjust(pvals.sub,"fdr")
+fdr.pvals.sub<-matrix(fdr.pvals.sub, nrow=3, ncol=3, byrow= FALSE)
+pval_col<-c("Carbohydrate","Grease","Protein")
+pval_row<-c("Carbohydrate","Grease","Protein")
+rownames(fdr.pvals.sub)<-pval_row
+colnames(fdr.pvals.sub)<-pval_col
+
+letters.sub<-multcompLetters(fdr.pvals.sub < 0.05)$Letters 
+```
+
+###dispersion check
+```{r}
+disp_sub<-betadisper(ASV_d, samdata$substrate, type="centroid")
+anova(disp_sub)
+```
+### plot
+```{r}
+plot(disp_sub, hull = FALSE, ellipse = TRUE) # Shows group spread
+```
+
+```{r}
+plot(disp_sub, axes = c(1,3)) # View PC1 vs PC3 instead of PC1 vs PC2
+```
+
+
+
+### check with vegan adonis
+```{r}
+samdata_no_olr.d<-data.frame(samdata_no_olr)
+adonis_sub<- adonis2(ASV_d~substrate, data=samdata_no_olr.d)
+```
+
+### check with pairwise adonis
+```{r}
+PW_adonis_sub<-pairwise.adonis(ASV_d, samdata_no_olr.d$substrate, p.adjust.m = "fdr", perm=999)
+```
+
+
+# Signficant differences within substrate categories
+#### looking at OLR_vs and recovery status
+
+# Protein- OLR_vs
+```{r}
+#check homogeneity
+ASV_p_d<-vegan::vegdist(ASVtab_p, method="bray")
+
+anova(vegan::betadisper(ASV_p_d, samdata_p$OLR_VS))
+```
+### rrpp
+```{r}
+ASV_m_p<-as.matrix(ASVtab_p)
+otu.rrpp_p_olr<-RRPP::lm.rrpp(ASV_p_d ~ OLR_VS+pH+Ammonia,
+                        data= samdata_p, SS.type="III",
+                        print.progress=FALSE,
+                        seed="random",
+                        iter=999)
+```
+
+```{r}
+anova(otu.rrpp_p_olr, effect.type="F")
+```
+### Pairwise
+```{r}
+#pairwise
+PW_p_olr<-RRPP::pairwise(otu.rrpp_p_olr, groups=samdata_p$OLR_VS)
+summary(PW_p_olr)
+```
+
+### adonis
+
+```{r}
+set.seed(51426)
+samdata_p.df<-data.frame(samdata_p)
+adonis_p<-adonis2(ASV_p_d~OLR_VS, data=samdata_p.df)
+```
+
+### adonis with other parameters
+```{r}
+adonis_p_co<- adonis2(ASV_p_d~OLR_VS+pH+Ammonia, data=samdata_p.df, by="margin")
+#OLR showing statistical significance, could also categorize continous variables but considering not much variability in pH not sure how easy or useful this would be. excluded TVFA because it seems to correlate to pH. 
+```
+
+```{r}
+adonis_p_nh3<- adonis2(ASV_p_d~Ammonia, data=samdata_p.df)
+```
+
+# Carbohydrate OLR_vs and Recovery
+### check dispersion on OLR
+```{r}
+ASV_c_d<-vegan::vegdist(ASVtab_c, method="bray")
+
+anova(vegan::betadisper(ASV_c_d, samdata_c$OLR_VS))
+```
+### check dispersion of recovery
+```{r}
+
+anova(vegan::betadisper(ASV_c_d, samdata_c$Recovery))
+# both dispersions are not significant so they are good
+```
+### adonis
+```{r}
+set.seed(51426)
+samdata_c.df<-data.frame(samdata_c)
+adonis_c_olr<-adonis2(ASV_c_d~OLR_VS, data=samdata_c.df)
+#showing significance based on OLR
+```
+
+```{r}
+adonis_c_rec<-adonis2(ASV_c_d~Recovery, data=samdata_c.df)
+#showing signficant difference based on OLR
+```
+
+```{r}
+adonis_c_co<-adonis2(ASV_c_d~OLR_VS+pH+Ammonia, data=samdata_c.df, by="margin") 
+```
+
+### pairwse adonis
+
+```{r}
+set.seed(51426)
+PW_adonis_c_olr<-pairwise.adonis(ASV_c_d, samdata_c.df$OLR_VS, p.adjust.m = "fdr", perm=999)
+```
+
+
+### rrpp
+```{r}
+ASV_m_c<-as.matrix(ASVtab_c)
+otu.rrpp_c_co <- lm.rrpp(ASV_c_d ~ OLR_VS*Recovery + pH + Ammonia, 
+                          data = samdata_c, 
+                          SS.type = "III")
+```
+
+```{r}
+anova(otu.rrpp_c_co, effect.type="F")
+```
+
+# Grease OLR_vs and Recovery
+##check dispersion on OLR
+```{r}
+ASV_g_d<-vegan::vegdist(ASVtab_g, method="bray")
+
+anova(vegan::betadisper(ASV_g_d, samdata_g$OLR_VS))
+```
+
+## check dispersion of Recovery
+```{r}
+anova(vegan::betadisper(ASV_g_d, samdata_g$Recovery))
+```
+
+##adonis
+```{r}
+set.seed(51426)
+samdata_g.df<-data.frame(samdata_g)
+adonis_g_olr<-adonis2(ASV_g_d~OLR_VS, data=samdata_g.df)
+```
+
+```{r}
+adonis_g_rec<-adonis2(ASV_g_d~Recovery, data=samdata_g.df)
+```
+
+```{r}
+adonis_g_co<-adonis2(ASV_g_d~OLR_VS+Recovery+pH+Ammonia, data=samdata_g.df, by="margin")
+```
+
+## rrpp
+```{r}
+ASV_m_g<-as.matrix(ASVtab_g)
+otu.rrpp_g_co <- lm.rrpp(ASV_g_d ~ OLR_VS*Recovery + pH + Ammonia, 
+                          data = samdata_g, 
+                          SS.type = "III")
+```
+
+```{r}
+anova(otu.rrpp_g_co, effect.type="F")
+```
+```{r}
+otu.rrpp_g_olr <- lm.rrpp(ASV_m_g ~ OLR_VS, 
+                          data = samdata_g, 
+                          SS.type = "III")
+
+anova(otu.rrpp_g_olr, effect.type="F")
+```
+
+
+# code from gemini to treat ph ammonia and tvfa as covariates
+```{r}
+# Multi-factor RRPP model incorporating treatments and covariates
+mod_bioreactor <- lm.rrpp(ASV_d ~ substrate + pH+ Ammonia+ OLR_num, 
+                          data = samdata_no_olr, 
+                          SS.type = "III") # Crucial for unique variance partitioning
+```
+
+
+```{r}
+anova(mod_bioreactor, effect.type="F") #leave of error so it will automatically run residuals
+```
+
+#dbRDA
+## Protein
+```{r}
+set.seed(51426)
+dbrda_p<-dbrda(ASV_p_d~ OLR_num+pH, data=samdata_p.df)
+vif.cca(dbrda_p)
+anova(dbrda_p)
+
+margin_p<-anova(dbrda_p, by="margin", permutations=999)
+print(margin_p)
+```
+```{r}
+plot(dbrda_p)
+```
+
+
+
+## Carbohydrate
+```{r}
+set.seed(51426)
+dbrda_c<-dbrda(ASV_c_d~ Ammonia+pH+OLR_VS, data=samdata_c.df, method="bray")
+vif.cca(dbrda_c)
+anova(dbrda_c)
+
+margin_c<-anova(dbrda_c, by="margin", permutations=999)
+print(margin_c)
+```
+```{r}
+plot(dbrda_c)
+```
+
+
+## Grease
+```{r}
+set.seed(51426)
+dbrda_g<-dbrda(ASV_g_d~ Ammonia+pH+OLR_VS, data=samdata_g.df)
+vif.cca(dbrda_g)
+summary(dbrda_g)
+
+margin_g<-anova(dbrda_g, by="margin", permutations=999)
+print(margin_g)
+```
+
+```{r}
+plot(dbrda_g)
+```
+
+
+# vegan cca
+##protein
+```{r}
+cca_p<-cca(ASVtab_p~ OLR_num+pH, data=samdata_p_std)
+vif.cca(cca_p)
+
+summary(cca_p)
+anova(cca_p, by="margin")
+plot(cca_p, display = c("wa","bp","cn")
+  
+P_cca_p<-autoplot(cca_p, display=c("wa","bp"), geom= "text")+
+  theme_classic()+
+  theme(legend.position="none")+
+  labs(title="A")
+```
+
+```{r}
+plot(cca_p, type="n")
+points(cca_p, display="wa", pch=21, col="blue", bg="blue", cex=2)
+text(cca_p, display="bp", col="black", cex=2)
+
+```
+
+
+
+## carbohyrdate
+```{r}
+cca_c<-cca(ASVtab_c~ OLR_num+pH+Ammonia, data=samdata_c_std)
+vif.cca(cca_c)
+
+summary(cca_c)
+anova(cca_c, by="margin")
+P_cca_c<-plot(cca_c, display = c("wa","bp","cn"))
+P_cca_c<-autoplot(cca_c, display=c("wa","bp"), geom= "text")+
+  theme_classic()+
+  theme(legend.position="none")+
+  labs(title="B")
+```
+## grease
+```{r}
+cca_g<-cca(ASVtab_g~ OLR_num+pH+Ammonia, data=samdata_g_std)
+vif.cca(cca_g)
+
+summary(cca_g)
+anova(cca_g, by="margin")
+
+P_cca_g<-autoplot(cca_g, display=c("wa","bp"), geom= "text")+
+  theme_classic()+
+  theme(legend.position="none")+
+  labs(title="C")
+```
+
+# combine CCA plots
+```{r}
+
+(P_cca_p|P_cca_c|P_cca_g)
+ggsave("GV_cca_plots.jpeg", width=20, heigh = 15, units=c("in"))
+```
+
